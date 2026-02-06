@@ -33,6 +33,7 @@ export const NETWORKS: { name: string; preset: NetworkPreset }[] = [
 export const DEFAULT_NETWORK_INDEX = 0;
 
 // Account presets
+// Note: Braavos deployment requires special signature format (see BraavosPreset docs)
 export const PRESETS: Record<string, AccountClassConfig> = {
   OpenZeppelin: OpenZeppelinPreset,
   Argent: ArgentPreset,

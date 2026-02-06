@@ -23,6 +23,7 @@ export {
   ArgentPreset,
   BraavosPreset,
   ArgentXV050Preset,
+  BRAAVOS_IMPL_CLASS_HASH,
 } from "@/account/presets";
 
 // Network Presets
