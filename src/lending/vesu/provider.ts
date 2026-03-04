@@ -3,6 +3,7 @@ import type {
   LendingBorrowRequest,
   LendingDepositRequest,
   LendingHealth,
+  LendingHealthQuoteRequest,
   LendingHealthRequest,
   LendingMarket,
   LendingPosition,
@@ -10,6 +11,7 @@ import type {
   LendingProvider,
   LendingProviderContext,
   LendingRepayRequest,
+  LendingWithdrawMaxRequest,
   LendingWithdrawRequest,
   PreparedLendingAction,
 } from "@/lending/interface";
@@ -18,6 +20,7 @@ import { CallData, type Call, uint256 } from "starknet";
 import { vesuPresets, type VesuChainConfig } from "@/lending/vesu/presets";
 
 type VesuChain = "SN_MAIN" | "SN_SEPOLIA";
+const VESU_SCALE = 10n ** 18n;
 
 interface VesuMarketApiItem {
   protocolVersion?: string;
@@ -178,6 +181,52 @@ export class VesuLendingProvider implements LendingProvider {
           entrypoint: "withdraw",
           calldata: CallData.compile([
             uint256.bnToUint256(amount),
+            receiver,
+            owner,
+          ]),
+        },
+      ],
+      market: this.marketFromRequest({
+        poolAddress,
+        token: request.token,
+        vTokenAddress,
+      }),
+    };
+  }
+
+  async prepareWithdrawMax(
+    context: LendingProviderContext,
+    request: LendingWithdrawMaxRequest
+  ): Promise<PreparedLendingAction> {
+    const config = this.requireChainConfig(context.chainId);
+    const poolAddress = this.resolvePoolAddress(request.poolAddress, config);
+    const receiver = request.receiver ?? context.walletAddress;
+    const owner = request.owner ?? context.walletAddress;
+    const vTokenAddress = await this.resolveVTokenAddress(
+      context,
+      poolAddress,
+      request.token.address
+    );
+
+    const maxRedeemResult = await context.provider.callContract({
+      contractAddress: vTokenAddress,
+      entrypoint: "max_redeem",
+      calldata: CallData.compile([owner]),
+    });
+    const maxShares = parseU256(maxRedeemResult, 0, "max_redeem");
+    if (maxShares <= 0n) {
+      throw new Error("No withdrawable Vesu shares for this position");
+    }
+
+    return {
+      providerId: this.id,
+      action: "withdraw",
+      calls: [
+        {
+          contractAddress: vTokenAddress,
+          entrypoint: "redeem",
+          calldata: CallData.compile([
+            uint256.bnToUint256(maxShares),
             receiver,
             owner,
           ]),
@@ -363,6 +412,141 @@ export class VesuLendingProvider implements LendingProvider {
     };
   }
 
+  async quoteProjectedHealth(
+    context: LendingProviderContext,
+    request: LendingHealthQuoteRequest,
+    current: LendingHealth
+  ): Promise<LendingHealth | null> {
+    if (
+      request.action.action !== "borrow" &&
+      request.action.action !== "repay"
+    ) {
+      return current;
+    }
+
+    const config = this.requireChainConfig(context.chainId);
+    const actionRequest = request.action.request;
+    const healthRequest = request.health;
+    const actionPoolAddress = this.resolvePoolAddress(
+      actionRequest.poolAddress,
+      config
+    );
+    const healthPoolAddress = this.resolvePoolAddress(
+      healthRequest.poolAddress,
+      config
+    );
+    const actionUser = actionRequest.user ?? context.walletAddress;
+    const healthUser = healthRequest.user ?? context.walletAddress;
+
+    if (
+      actionPoolAddress !== healthPoolAddress ||
+      actionUser !== healthUser ||
+      actionRequest.collateralToken.address !==
+        healthRequest.collateralToken.address ||
+      actionRequest.debtToken.address !== healthRequest.debtToken.address
+    ) {
+      return null;
+    }
+
+    const collateralDenomination =
+      actionRequest.collateralDenomination ?? "assets";
+    const debtDenomination = actionRequest.debtDenomination ?? "assets";
+    if (collateralDenomination !== "assets" || debtDenomination !== "assets") {
+      return null;
+    }
+
+    const collateralAmount = actionRequest.collateralAmount?.toBase() ?? 0n;
+    let collateralDelta = collateralAmount;
+    let debtDelta: bigint;
+    if (request.action.action === "repay") {
+      collateralDelta = request.action.request.withdrawCollateral
+        ? -collateralAmount
+        : collateralAmount;
+      debtDelta = -request.action.request.amount.toBase();
+    } else {
+      debtDelta = request.action.request.amount.toBase();
+    }
+
+    const [collateralPrice, debtPrice, maxLtv] = await Promise.all([
+      this.readAssetPrice(
+        context,
+        actionPoolAddress,
+        actionRequest.collateralToken.address
+      ),
+      this.readAssetPrice(
+        context,
+        actionPoolAddress,
+        actionRequest.debtToken.address
+      ),
+      this.readPairMaxLtv(
+        context,
+        actionPoolAddress,
+        actionRequest.collateralToken.address,
+        actionRequest.debtToken.address
+      ),
+    ]);
+    if (!collateralPrice.isValid || !debtPrice.isValid) {
+      return null;
+    }
+
+    const collateralDeltaValue = amountToValueDelta(
+      collateralDelta,
+      collateralPrice.value,
+      tokenScale(actionRequest.collateralToken.decimals),
+      "floor"
+    );
+    const debtDeltaValue = amountToValueDelta(
+      debtDelta,
+      debtPrice.value,
+      tokenScale(actionRequest.debtToken.decimals),
+      "ceil"
+    );
+    const collateralValue = clampNonNegative(
+      current.collateralValue + collateralDeltaValue
+    );
+    const debtValue = clampNonNegative(current.debtValue + debtDeltaValue);
+
+    return {
+      isCollateralized: collateralValue * maxLtv >= debtValue * VESU_SCALE,
+      collateralValue,
+      debtValue,
+    };
+  }
+
+  private async readAssetPrice(
+    context: LendingProviderContext,
+    poolAddress: Address,
+    assetAddress: Address
+  ): Promise<{ value: bigint; isValid: boolean }> {
+    const result = await context.provider.callContract({
+      contractAddress: poolAddress,
+      entrypoint: "price",
+      calldata: CallData.compile([assetAddress]),
+    });
+    return {
+      value: parseU256(result, 0, "asset_price"),
+      isValid: parseBool(result[2], "asset_price_is_valid"),
+    };
+  }
+
+  private async readPairMaxLtv(
+    context: LendingProviderContext,
+    poolAddress: Address,
+    collateralAsset: Address,
+    debtAsset: Address
+  ): Promise<bigint> {
+    const result = await context.provider.callContract({
+      contractAddress: poolAddress,
+      entrypoint: "pair_config",
+      calldata: CallData.compile([collateralAsset, debtAsset]),
+    });
+    const maxLtv = result[0];
+    if (maxLtv == null) {
+      throw new Error('Missing felt value for "max_ltv"');
+    }
+    return BigInt(String(maxLtv));
+  }
+
   private buildApproveCall(
     tokenAddress: Address,
     spender: Address,
@@ -513,6 +697,30 @@ function assertAssetsDenomination(
   throw new Error(
     `Vesu ${action} currently supports only "assets" denomination for ${side}; received "${denomination}"`
   );
+}
+
+function tokenScale(decimals: number): bigint {
+  return 10n ** BigInt(decimals);
+}
+
+function amountToValueDelta(
+  amountDelta: bigint,
+  price: bigint,
+  scale: bigint,
+  rounding: "floor" | "ceil"
+): bigint {
+  const magnitude = amountDelta < 0n ? -amountDelta : amountDelta;
+  if (magnitude === 0n) {
+    return 0n;
+  }
+  const numerator = magnitude * price;
+  const quotient =
+    rounding === "ceil" ? (numerator + scale - 1n) / scale : numerator / scale;
+  return amountDelta < 0n ? -quotient : quotient;
+}
+
+function clampNonNegative(value: bigint): bigint {
+  return value < 0n ? 0n : value;
 }
 
 function encodeAmount(

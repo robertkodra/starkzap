@@ -78,6 +78,12 @@ export interface LendingWithdrawRequest extends LendingRequestBase {
   owner?: Address;
 }
 
+export interface LendingWithdrawMaxRequest extends LendingRequestBase {
+  token: Token;
+  receiver?: Address;
+  owner?: Address;
+}
+
 export interface LendingBorrowRequest extends LendingRequestBase {
   collateralToken: Token;
   debtToken: Token;
@@ -127,6 +133,8 @@ export interface LendingHealthQuote {
   current: LendingHealth;
   prepared: PreparedLendingAction;
   simulation: PreflightResult;
+  /** Optional projected post-action health estimate from the provider. */
+  projected?: LendingHealth | null;
 }
 
 export interface LendingProviderContext {
@@ -156,6 +164,10 @@ export interface LendingProvider {
     context: LendingProviderContext,
     request: LendingWithdrawRequest
   ): Promise<PreparedLendingAction>;
+  prepareWithdrawMax?(
+    context: LendingProviderContext,
+    request: LendingWithdrawMaxRequest
+  ): Promise<PreparedLendingAction>;
   prepareBorrow(
     context: LendingProviderContext,
     request: LendingBorrowRequest
@@ -172,4 +184,9 @@ export interface LendingProvider {
     context: LendingProviderContext,
     request: LendingHealthRequest
   ): Promise<LendingHealth>;
+  quoteProjectedHealth?(
+    context: LendingProviderContext,
+    request: LendingHealthQuoteRequest,
+    current: LendingHealth
+  ): Promise<LendingHealth | null>;
 }

@@ -96,6 +96,52 @@ describe("VesuLendingProvider", () => {
     expect(callContract).not.toHaveBeenCalled();
   });
 
+  it("builds withdraw-max using max_redeem + redeem", async () => {
+    const callContract = vi
+      .fn()
+      .mockResolvedValueOnce([fromAddress("0x1234")])
+      .mockResolvedValueOnce(toU256Words(777n));
+    const provider = new VesuLendingProvider();
+    const context = createContext(callContract);
+
+    const prepared = await provider.prepareWithdrawMax(context, {
+      token: debtToken,
+    });
+
+    expect(callContract).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        contractAddress: vesuPresets.SN_MAIN.poolFactory,
+        entrypoint: "v_token_for_asset",
+      })
+    );
+    expect(callContract).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        contractAddress: fromAddress("0x1234"),
+        entrypoint: "max_redeem",
+      })
+    );
+    expect(prepared.calls).toHaveLength(1);
+    expect(prepared.calls[0]!.entrypoint).toBe("redeem");
+    expect(prepared.calls[0]!.contractAddress).toBe(fromAddress("0x1234"));
+  });
+
+  it("throws when withdraw-max has zero redeemable shares", async () => {
+    const callContract = vi
+      .fn()
+      .mockResolvedValueOnce([fromAddress("0x1234")])
+      .mockResolvedValueOnce(toU256Words(0n));
+    const provider = new VesuLendingProvider();
+    const context = createContext(callContract);
+
+    await expect(
+      provider.prepareWithdrawMax(context, {
+        token: debtToken,
+      })
+    ).rejects.toThrow("No withdrawable Vesu shares for this position");
+  });
+
   it("builds borrow with collateral + debt deltas", async () => {
     const callContract = vi.fn();
     const provider = new VesuLendingProvider();
@@ -217,6 +263,46 @@ describe("VesuLendingProvider", () => {
     expect(health.isCollateralized).toBe(false);
     expect(health.collateralValue).toBe(500n);
     expect(health.debtValue).toBe(900n);
+  });
+
+  it("quotes projected health for borrow/repay deltas", async () => {
+    const callContract = vi
+      .fn()
+      .mockResolvedValueOnce([...toU256Words(1000n), "1"])
+      .mockResolvedValueOnce([...toU256Words(500n), "1"])
+      .mockResolvedValueOnce(["700000000000000000", "0", "0"]);
+    const provider = new VesuLendingProvider();
+    const context = createContext(callContract);
+
+    const projected = await provider.quoteProjectedHealth(
+      context,
+      {
+        action: {
+          action: "borrow",
+          request: {
+            collateralToken,
+            debtToken,
+            collateralAmount: Amount.parse("1", collateralToken),
+            amount: Amount.parse("2", debtToken),
+          },
+        },
+        health: {
+          collateralToken,
+          debtToken,
+        },
+      },
+      {
+        isCollateralized: true,
+        collateralValue: 9000n,
+        debtValue: 3000n,
+      }
+    );
+
+    expect(projected).toEqual({
+      isCollateralized: true,
+      collateralValue: 10000n,
+      debtValue: 4000n,
+    });
   });
 
   it("maps markets from API payload", async () => {

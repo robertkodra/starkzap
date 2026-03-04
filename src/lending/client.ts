@@ -13,6 +13,7 @@ import type {
   LendingProvider,
   LendingProviderContext,
   LendingRepayRequest,
+  LendingWithdrawMaxRequest,
   LendingWithdrawRequest,
   PreparedLendingAction,
 } from "@/lending/interface";
@@ -25,6 +26,7 @@ import {
   hydrateDepositRequest,
   hydrateHealthRequest,
   hydrateRepayRequest,
+  hydrateWithdrawMaxRequest,
   hydrateWithdrawRequest,
   resolveLendingSource,
   stripProvider,
@@ -132,6 +134,32 @@ export class LendingClient {
     return await this.context.execute(prepared.calls, options);
   }
 
+  async prepareWithdrawMax(
+    request: LendingWithdrawMaxRequest
+  ): Promise<PreparedLendingAction> {
+    const chainId = this.context.getChainId();
+    const provider = resolveLendingSource(request.provider, this);
+    assertLendingContext(provider, chainId);
+    if (!provider.prepareWithdrawMax) {
+      throw new Error(
+        `Lending provider "${provider.id}" does not support max-withdraw`
+      );
+    }
+    const prepared = await provider.prepareWithdrawMax(this.providerContext(), {
+      ...hydrateWithdrawMaxRequest(request, this.context.address),
+    });
+    this.assertPreparedCalls(prepared, provider.id);
+    return prepared;
+  }
+
+  async withdrawMax(
+    request: LendingWithdrawMaxRequest,
+    options?: ExecuteOptions
+  ): Promise<Tx> {
+    const prepared = await this.prepareWithdrawMax(request);
+    return await this.context.execute(prepared.calls, options);
+  }
+
   async prepareBorrow(
     request: LendingBorrowRequest
   ): Promise<PreparedLendingAction> {
@@ -204,7 +232,8 @@ export class LendingClient {
       calls: prepared.calls,
       ...(request.feeMode != null && { feeMode: request.feeMode }),
     });
-    return { current, prepared, simulation };
+    const projected = await this.projectHealth(request, current);
+    return { current, prepared, simulation, projected };
   }
 
   private async prepareAction(
@@ -220,6 +249,32 @@ export class LendingClient {
       return await this.prepareBorrow(input.request);
     }
     return await this.prepareRepay(input.request);
+  }
+
+  private providerForAction(input: LendingActionInput): LendingProvider {
+    return resolveLendingSource(input.request.provider, this);
+  }
+
+  private async projectHealth(
+    request: LendingHealthQuoteRequest,
+    current: LendingHealth
+  ): Promise<LendingHealth | null> {
+    const chainId = this.context.getChainId();
+    const healthProvider = resolveLendingSource(request.health.provider, this);
+    const actionProvider = this.providerForAction(request.action);
+    assertLendingContext(healthProvider, chainId);
+    assertLendingContext(actionProvider, chainId);
+    if (healthProvider.id !== actionProvider.id) {
+      return null;
+    }
+    if (!actionProvider.quoteProjectedHealth) {
+      return null;
+    }
+    return await actionProvider.quoteProjectedHealth(
+      this.providerContext(),
+      request,
+      current
+    );
   }
 
   private providerContext(): LendingProviderContext {

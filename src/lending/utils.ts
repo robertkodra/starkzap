@@ -7,6 +7,7 @@ import type {
   LendingProviderResolver,
   LendingRepayRequest,
   LendingRequestBase,
+  LendingWithdrawMaxRequest,
   LendingWithdrawRequest,
 } from "@/lending/interface";
 
@@ -58,6 +59,17 @@ export function hydrateWithdrawRequest(
   request: LendingWithdrawRequest,
   walletAddress: Address
 ): RequestWithoutProvider<LendingWithdrawRequest> {
+  return {
+    ...stripProvider(request),
+    receiver: request.receiver ?? walletAddress,
+    owner: request.owner ?? walletAddress,
+  };
+}
+
+export function hydrateWithdrawMaxRequest(
+  request: LendingWithdrawMaxRequest,
+  walletAddress: Address
+): RequestWithoutProvider<LendingWithdrawMaxRequest> {
   return {
     ...stripProvider(request),
     receiver: request.receiver ?? walletAddress,

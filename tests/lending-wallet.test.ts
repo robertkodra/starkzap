@@ -121,6 +121,11 @@ function createProvider(
       action: "withdraw",
       calls: [lendingCall],
     }),
+    prepareWithdrawMax: vi.fn().mockResolvedValue({
+      providerId: "provider",
+      action: "withdraw",
+      calls: [lendingCall],
+    }),
     prepareBorrow: vi.fn().mockResolvedValue({
       providerId: "provider",
       action: "borrow",
@@ -139,6 +144,11 @@ function createProvider(
       isCollateralized: true,
     }),
     getHealth: vi.fn().mockResolvedValue({
+      isCollateralized: true,
+      collateralValue: 1n,
+      debtValue: 0n,
+    }),
+    quoteProjectedHealth: vi.fn().mockResolvedValue({
       isCollateralized: true,
       collateralValue: 1n,
       debtValue: 0n,
@@ -218,9 +228,32 @@ describe("BaseWallet lending abstraction", () => {
 
     expect(result.current.debtValue).toBe(100n);
     expect(result.prepared.calls).toEqual([lendingCall]);
+    expect(result.projected).toEqual({
+      isCollateralized: true,
+      collateralValue: 1n,
+      debtValue: 0n,
+    });
     expect(wallet.preflightSpy).toHaveBeenCalledWith({
       calls: [lendingCall],
       feeMode: "sponsored",
+    });
+  });
+
+  it("executes withdrawMax when provider supports it", async () => {
+    const provider = createProvider();
+    const wallet = new TestWallet(provider);
+
+    await wallet.lending().withdrawMax(
+      {
+        provider,
+        token: debtToken,
+      },
+      { feeMode: "user_pays" }
+    );
+
+    expect(provider.prepareWithdrawMax).toHaveBeenCalledTimes(1);
+    expect(wallet.executeSpy).toHaveBeenCalledWith([lendingCall], {
+      feeMode: "user_pays",
     });
   });
 
