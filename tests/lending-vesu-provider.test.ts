@@ -56,7 +56,13 @@ describe("VesuLendingProvider", () => {
 
   it("throws on deposit when chain has no poolFactory configured", async () => {
     const callContract = vi.fn();
-    const provider = new VesuLendingProvider();
+    const provider = new VesuLendingProvider({
+      chainConfigs: {
+        SN_SEPOLIA: {
+          poolFactory: null,
+        },
+      },
+    });
     const context = createContext(callContract, ChainId.SEPOLIA);
 
     await expect(

@@ -13,16 +13,16 @@ const maybeDescribe = RUN_LIVE_VESU_SEPOLIA_TESTS ? describe : describe.skip;
 
 const SEPOLIA_POOL = vesuPresets.SN_SEPOLIA.defaultPool!;
 const SEPOLIA_POOL_FACTORY =
-  process.env.STARKZAP_VESU_SEPOLIA_POOL_FACTORY?.trim().toLowerCase();
+  process.env.STARKZAP_VESU_SEPOLIA_POOL_FACTORY?.trim()
+    ? fromAddress(process.env.STARKZAP_VESU_SEPOLIA_POOL_FACTORY.trim())
+    : vesuPresets.SN_SEPOLIA.poolFactory;
 
 function createSepoliaProvider() {
   return new VesuLendingProvider({
     chainConfigs: {
       SN_SEPOLIA: {
         defaultPool: SEPOLIA_POOL,
-        ...(SEPOLIA_POOL_FACTORY
-          ? { poolFactory: fromAddress(SEPOLIA_POOL_FACTORY) }
-          : {}),
+        ...(SEPOLIA_POOL_FACTORY ? { poolFactory: SEPOLIA_POOL_FACTORY } : {}),
       },
     },
   });

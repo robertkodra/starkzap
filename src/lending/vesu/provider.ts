@@ -48,8 +48,8 @@ export interface VesuLendingProviderOptions {
     Record<
       VesuChain,
       {
-        poolFactory?: Address | string;
-        defaultPool?: Address | string;
+        poolFactory?: Address | string | null;
+        defaultPool?: Address | string | null;
         marketsApiUrl?: string | null;
       }
     >
@@ -77,20 +77,24 @@ export class VesuLendingProvider implements LendingProvider {
         continue;
       }
       chainConfigs[literal] = {
-        ...(override?.poolFactory != null || base?.poolFactory != null
-          ? {
-              poolFactory: fromAddress(
-                override?.poolFactory ?? (base?.poolFactory as Address)
-              ),
-            }
-          : {}),
-        ...(override?.defaultPool != null || base?.defaultPool != null
-          ? {
-              defaultPool: fromAddress(
-                override?.defaultPool ?? (base?.defaultPool as Address)
-              ),
-            }
-          : {}),
+        ...(override?.poolFactory === null
+          ? {}
+          : override?.poolFactory != null || base?.poolFactory != null
+            ? {
+                poolFactory: fromAddress(
+                  override?.poolFactory ?? (base?.poolFactory as Address)
+                ),
+              }
+            : {}),
+        ...(override?.defaultPool === null
+          ? {}
+          : override?.defaultPool != null || base?.defaultPool != null
+            ? {
+                defaultPool: fromAddress(
+                  override?.defaultPool ?? (base?.defaultPool as Address)
+                ),
+              }
+            : {}),
         ...(override?.marketsApiUrl !== undefined
           ? override.marketsApiUrl
             ? { marketsApiUrl: override.marketsApiUrl }

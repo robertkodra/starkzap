@@ -25,6 +25,9 @@ export const vesuPresets = {
   // Testnet pool shared by Vesu team for integration testing.
   // Pool name on-chain: "WBTC Prime Sepolia"
   SN_SEPOLIA: {
+    poolFactory: fromAddress(
+      "0x03ac869e64b1164aaee7f3fd251f86581eab8bfbbd2abdf1e49c773282d4a092"
+    ),
     defaultPool: fromAddress(
       "0x06227c13372b8c7b7f38ad1cfe05b5cf515b4e5c596dd05fe8437ab9747b2093"
     ),
