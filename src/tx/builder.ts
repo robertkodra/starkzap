@@ -6,6 +6,8 @@ import { resolveSwapInput } from "@/swap/utils";
 import type {
   LendingBorrowRequest,
   LendingDepositRequest,
+  LendingWithdrawMaxRequest,
+  PreparedLendingAction,
   LendingRepayRequest,
   LendingWithdrawRequest,
 } from "@/lending";
@@ -74,6 +76,20 @@ export class TxBuilder {
       return [];
     });
     this.pending.push(tracked);
+  }
+
+  private queueLendingAction(
+    action: string,
+    preparedPromise: Promise<PreparedLendingAction>
+  ): this {
+    const calls = preparedPromise.then((prepared) => {
+      if (prepared.calls.length === 0) {
+        throw new Error(`Lending action "${action}" returned no calls`);
+      }
+      return prepared.calls;
+    });
+    this.queueAsyncCalls(calls);
+    return this;
   }
 
   private throwPendingErrorsIfAny(): void {
@@ -249,68 +265,50 @@ export class TxBuilder {
    * Add a lending deposit operation.
    */
   lendDeposit(request: LendingDepositRequest): this {
-    const p = this.wallet
-      .lending()
-      .prepareDeposit(request)
-      .then((prepared) => {
-        if (prepared.calls.length === 0) {
-          throw new Error('Lending action "deposit" returned no calls');
-        }
-        return prepared.calls;
-      });
-    this.queueAsyncCalls(p);
-    return this;
+    return this.queueLendingAction(
+      "deposit",
+      this.wallet.lending().prepareDeposit(request)
+    );
   }
 
   /**
    * Add a lending withdraw operation.
    */
   lendWithdraw(request: LendingWithdrawRequest): this {
-    const p = this.wallet
-      .lending()
-      .prepareWithdraw(request)
-      .then((prepared) => {
-        if (prepared.calls.length === 0) {
-          throw new Error('Lending action "withdraw" returned no calls');
-        }
-        return prepared.calls;
-      });
-    this.queueAsyncCalls(p);
-    return this;
+    return this.queueLendingAction(
+      "withdraw",
+      this.wallet.lending().prepareWithdraw(request)
+    );
+  }
+
+  /**
+   * Add a max-withdraw lending operation.
+   */
+  lendWithdrawMax(request: LendingWithdrawMaxRequest): this {
+    return this.queueLendingAction(
+      "withdrawMax",
+      this.wallet.lending().prepareWithdrawMax(request)
+    );
   }
 
   /**
    * Add a lending borrow operation.
    */
   lendBorrow(request: LendingBorrowRequest): this {
-    const p = this.wallet
-      .lending()
-      .prepareBorrow(request)
-      .then((prepared) => {
-        if (prepared.calls.length === 0) {
-          throw new Error('Lending action "borrow" returned no calls');
-        }
-        return prepared.calls;
-      });
-    this.queueAsyncCalls(p);
-    return this;
+    return this.queueLendingAction(
+      "borrow",
+      this.wallet.lending().prepareBorrow(request)
+    );
   }
 
   /**
    * Add a lending repay operation.
    */
   lendRepay(request: LendingRepayRequest): this {
-    const p = this.wallet
-      .lending()
-      .prepareRepay(request)
-      .then((prepared) => {
-        if (prepared.calls.length === 0) {
-          throw new Error('Lending action "repay" returned no calls');
-        }
-        return prepared.calls;
-      });
-    this.queueAsyncCalls(p);
-    return this;
+    return this.queueLendingAction(
+      "repay",
+      this.wallet.lending().prepareRepay(request)
+    );
   }
 
   // ============================================================

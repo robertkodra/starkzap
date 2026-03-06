@@ -1,26 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ChainId, Amount, fromAddress, type Token } from "@/types";
+import { ChainId, Amount, fromAddress } from "@/types";
 import { VesuLendingProvider, vesuPresets } from "@/lending/vesu";
 import type { LendingProviderContext } from "@/lending";
 import type { RpcProvider } from "starknet";
-
-const collateralToken: Token = {
-  name: "Starknet Token",
-  symbol: "STRK",
-  decimals: 18,
-  address: fromAddress(
-    "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d"
-  ),
-};
-
-const debtToken: Token = {
-  name: "USD Coin",
-  symbol: "USDC",
-  decimals: 6,
-  address: fromAddress(
-    "0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8"
-  ),
-};
+import {
+  testLendingCollateralToken as collateralToken,
+  testLendingDebtToken as debtToken,
+} from "./fixtures/lending";
 
 function toU256Words(value: bigint): [string, string] {
   const mask = (1n << 128n) - 1n;
@@ -325,6 +311,77 @@ describe("VesuLendingProvider", () => {
       isCollateralized: true,
       collateralValue: 10000n,
       debtValue: 4000n,
+    });
+  });
+
+  it("returns null for unsupported projected health actions", async () => {
+    const provider = new VesuLendingProvider();
+    const projected = await provider.quoteProjectedHealth(
+      createContext(vi.fn()),
+      {
+        action: {
+          action: "deposit",
+          request: {
+            token: debtToken,
+            amount: Amount.parse("1", debtToken),
+          },
+        },
+        health: {
+          collateralToken,
+          debtToken,
+        },
+      },
+      {
+        isCollateralized: true,
+        collateralValue: 100n,
+        debtValue: 50n,
+      }
+    );
+
+    expect(projected).toBeNull();
+  });
+
+  it("uses conservative rounding for negative projected deltas", async () => {
+    const callContract = vi
+      .fn()
+      .mockResolvedValueOnce([...toU256Words(1n), "1"])
+      .mockResolvedValueOnce([...toU256Words(1n), "1"])
+      .mockResolvedValueOnce(["1000000000000000000"]);
+    const provider = new VesuLendingProvider();
+    const context = createContext(callContract);
+
+    const projected = await provider.quoteProjectedHealth(
+      context,
+      {
+        action: {
+          action: "repay",
+          request: {
+            collateralToken,
+            debtToken,
+            collateralAmount: Amount.parse(
+              "0.000000000000000001",
+              collateralToken
+            ),
+            amount: Amount.parse("0.000001", debtToken),
+            withdrawCollateral: true,
+          },
+        },
+        health: {
+          collateralToken,
+          debtToken,
+        },
+      },
+      {
+        isCollateralized: true,
+        collateralValue: 10n,
+        debtValue: 10n,
+      }
+    );
+
+    expect(projected).toEqual({
+      isCollateralized: false,
+      collateralValue: 9n,
+      debtValue: 10n,
     });
   });
 

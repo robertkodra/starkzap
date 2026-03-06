@@ -3,6 +3,7 @@ import { Amount, ChainId, fromAddress } from "@/types";
 import { StarkZap } from "@/sdk";
 import { StarkSigner } from "@/signer";
 import { sepoliaTokens } from "@/erc20";
+import type { LendingClient } from "@/lending";
 import { VesuLendingProvider, vesuPresets } from "@/lending/vesu";
 import type { Tx } from "@/tx";
 import { testnetConfig, testnetFunder } from "./config";
@@ -96,6 +97,34 @@ async function ensureUsdcBuffer(
   return usdcBalance;
 }
 
+async function cleanupBorrowLifecycle(
+  lending: LendingClient,
+  healthRequest: {
+    provider: VesuLendingProvider;
+    collateralToken: typeof sepoliaTokens.STRK;
+    debtToken: typeof sepoliaTokens.USDC;
+  },
+  repayRequest: {
+    provider: VesuLendingProvider;
+    collateralToken: typeof sepoliaTokens.STRK;
+    debtToken: typeof sepoliaTokens.USDC;
+    amount: Amount;
+    collateralAmount: Amount;
+    withdrawCollateral: true;
+  }
+) {
+  try {
+    const position = await lending.getPosition(healthRequest);
+    if ((position.debtAmount ?? 0n) === 0n) {
+      return;
+    }
+    const tx = await lending.repay(repayRequest, { feeMode: "user_pays" });
+    await waitAndLogTx("Borrow lifecycle cleanup", tx);
+  } catch (error) {
+    console.error("Borrow lifecycle cleanup failed", error);
+  }
+}
+
 maybeDescribe("Live Vesu Sepolia E2E (opt-in)", () => {
   it("runs supply-like, withdraw-like, borrow, and repay lifecycle on Sepolia", async () => {
     const wallet = await createWallet();
@@ -175,14 +204,6 @@ maybeDescribe("Live Vesu Sepolia E2E (opt-in)", () => {
     });
     expect(borrowQuote.simulation.ok).toBe(true);
     expect(borrowQuote.projected).not.toBeNull();
-    const borrowTx = await lending.borrow(borrowRequest, {
-      feeMode: "user_pays",
-    });
-    await waitAndLogTx("Borrow lifecycle open", borrowTx);
-
-    const postBorrowPosition = await lending.getPosition(healthRequest);
-    expect((postBorrowPosition.debtAmount ?? 0n) > 0n).toBe(true);
-
     const repayRequest = {
       provider,
       collateralToken: STRK,
@@ -198,11 +219,25 @@ maybeDescribe("Live Vesu Sepolia E2E (opt-in)", () => {
       feeMode: "user_pays",
     });
     expect(repayQuote.simulation.ok).toBe(true);
-    const repayTx = await lending.repay(repayRequest, { feeMode: "user_pays" });
-    await waitAndLogTx("Borrow lifecycle close", repayTx);
+    try {
+      const borrowTx = await lending.borrow(borrowRequest, {
+        feeMode: "user_pays",
+      });
+      await waitAndLogTx("Borrow lifecycle open", borrowTx);
 
-    const finalPosition = await lending.getPosition(healthRequest);
-    expect(finalPosition.debtAmount ?? 0n).toBe(0n);
+      const postBorrowPosition = await lending.getPosition(healthRequest);
+      expect((postBorrowPosition.debtAmount ?? 0n) > 0n).toBe(true);
+
+      const repayTx = await lending.repay(repayRequest, {
+        feeMode: "user_pays",
+      });
+      await waitAndLogTx("Borrow lifecycle close", repayTx);
+
+      const finalPosition = await lending.getPosition(healthRequest);
+      expect(finalPosition.debtAmount ?? 0n).toBe(0n);
+    } finally {
+      await cleanupBorrowLifecycle(lending, healthRequest, repayRequest);
+    }
   }, 420_000);
 
   const maybeItWithPoolFactory = SEPOLIA_POOL_FACTORY ? it : it.skip;

@@ -12,24 +12,12 @@ import type { WalletInterface } from "@/wallet/interface";
 import type { Call } from "starknet";
 import type { Staking } from "@/staking";
 import type { SwapProvider } from "@/swap";
+import {
+  testLendingCollateralToken as mockSTRK,
+  testLendingDebtToken as mockUSDC,
+} from "./fixtures/lending";
 
 // ─── Test fixtures ───────────────────────────────────────────────────────────
-
-const mockUSDC: Token = {
-  name: "USD Coin",
-  address:
-    "0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8" as Address,
-  decimals: 6,
-  symbol: "USDC",
-};
-
-const mockSTRK: Token = {
-  name: "Starknet Token",
-  address:
-    "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d" as Address,
-  decimals: 18,
-  symbol: "STRK",
-};
 
 const alice = fromAddress("0xA11CE");
 const bob = fromAddress("0xB0B");
@@ -81,6 +69,12 @@ const lendingDepositCall: Call = {
 const lendingWithdrawCall: Call = {
   contractAddress: fromAddress("0x502"),
   entrypoint: "withdraw",
+  calldata: ["100", "0", "0xwallet", "0xwallet"],
+};
+
+const lendingWithdrawMaxCall: Call = {
+  contractAddress: fromAddress("0x502"),
+  entrypoint: "redeem",
   calldata: ["100", "0", "0xwallet", "0xwallet"],
 };
 
@@ -144,6 +138,9 @@ function createMockWallet(
     }),
     prepareWithdraw: vi.fn().mockResolvedValue({
       calls: [lendingWithdrawCall],
+    }),
+    prepareWithdrawMax: vi.fn().mockResolvedValue({
+      calls: [lendingWithdrawMaxCall],
     }),
     prepareBorrow: vi.fn().mockResolvedValue({
       calls: [lendingBorrowCall],
@@ -233,6 +230,9 @@ describe("TxBuilder", () => {
         builder
       );
       expect(builder.lendWithdraw({ token: mockUSDC, amount } as unknown)).toBe(
+        builder
+      );
+      expect(builder.lendWithdrawMax({ token: mockUSDC } as unknown)).toBe(
         builder
       );
       expect(
@@ -642,6 +642,57 @@ describe("TxBuilder", () => {
       expect(calls).toEqual([lendingDepositCall]);
     });
 
+    it("should resolve lending withdraw calls", async () => {
+      const wallet = createMockWallet();
+      const amount = Amount.parse("100", mockUSDC);
+
+      const calls = await new TxBuilder(wallet)
+        .lendWithdraw({ token: mockUSDC, amount })
+        .calls();
+
+      expect(calls).toEqual([lendingWithdrawCall]);
+      const lending = wallet.lending();
+      expect(lending.prepareWithdraw).toHaveBeenCalledWith({
+        token: mockUSDC,
+        amount,
+      });
+    });
+
+    it("should resolve lending withdrawMax calls", async () => {
+      const wallet = createMockWallet();
+
+      const calls = await new TxBuilder(wallet)
+        .lendWithdrawMax({ token: mockUSDC })
+        .calls();
+
+      expect(calls).toEqual([lendingWithdrawMaxCall]);
+      const lending = wallet.lending();
+      expect(lending.prepareWithdrawMax).toHaveBeenCalledWith({
+        token: mockUSDC,
+      });
+    });
+
+    it("should resolve lending borrow calls", async () => {
+      const wallet = createMockWallet();
+      const amount = Amount.parse("10", mockUSDC);
+
+      const calls = await new TxBuilder(wallet)
+        .lendBorrow({
+          collateralToken: mockSTRK,
+          debtToken: mockUSDC,
+          amount,
+        })
+        .calls();
+
+      expect(calls).toEqual([lendingBorrowCall]);
+      const lending = wallet.lending();
+      expect(lending.prepareBorrow).toHaveBeenCalledWith({
+        collateralToken: mockSTRK,
+        debtToken: mockUSDC,
+        amount,
+      });
+    });
+
     it("should resolve lending repay calls", async () => {
       const wallet = createMockWallet();
       const amount = Amount.parse("10", mockUSDC);
@@ -663,21 +714,20 @@ describe("TxBuilder", () => {
       });
     });
 
-    it("should throw when lending action returns no calls", async () => {
+    it("should throw when lending withdrawMax returns no calls", async () => {
       const wallet = createMockWallet({
         lending: vi.fn().mockReturnValue({
-          prepareDeposit: vi.fn().mockResolvedValue({ calls: [] }),
+          prepareWithdrawMax: vi.fn().mockResolvedValue({ calls: [] }),
         }),
       });
 
       await expect(
         new TxBuilder(wallet)
-          .lendDeposit({
+          .lendWithdrawMax({
             token: mockUSDC,
-            amount: Amount.parse("1", mockUSDC),
           })
           .calls()
-      ).rejects.toThrow('Lending action "deposit" returned no calls');
+      ).rejects.toThrow('Lending action "withdrawMax" returned no calls');
     });
   });
 

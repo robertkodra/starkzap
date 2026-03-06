@@ -86,126 +86,110 @@ export class LendingClient {
   async getMarkets(
     request: LendingMarketsRequest = {}
   ): Promise<LendingMarket[]> {
-    const chainId = this.context.getChainId();
-    const provider = resolveLendingSource(request.provider, this);
-    assertLendingContext(provider, chainId);
-    return await provider.getMarkets(chainId);
+    return await this.resolveRequestProvider(request.provider).getMarkets(
+      this.context.getChainId()
+    );
   }
 
   async prepareDeposit(
     request: LendingDepositRequest
   ): Promise<PreparedLendingAction> {
-    const chainId = this.context.getChainId();
-    const provider = resolveLendingSource(request.provider, this);
-    assertLendingContext(provider, chainId);
-    const prepared = await provider.prepareDeposit(this.providerContext(), {
-      ...hydrateDepositRequest(request, this.context.address),
-    });
-    this.assertPreparedCalls(prepared, provider.id);
-    return prepared;
+    return await this.prepareWithProvider(
+      request,
+      hydrateDepositRequest,
+      (provider, context, hydrated) =>
+        provider.prepareDeposit(context, hydrated)
+    );
   }
 
   async deposit(
     request: LendingDepositRequest,
     options?: ExecuteOptions
   ): Promise<Tx> {
-    const prepared = await this.prepareDeposit(request);
-    return await this.context.execute(prepared.calls, options);
+    return await this.executePrepared(this.prepareDeposit(request), options);
   }
 
   async prepareWithdraw(
     request: LendingWithdrawRequest
   ): Promise<PreparedLendingAction> {
-    const chainId = this.context.getChainId();
-    const provider = resolveLendingSource(request.provider, this);
-    assertLendingContext(provider, chainId);
-    const prepared = await provider.prepareWithdraw(this.providerContext(), {
-      ...hydrateWithdrawRequest(request, this.context.address),
-    });
-    this.assertPreparedCalls(prepared, provider.id);
-    return prepared;
+    return await this.prepareWithProvider(
+      request,
+      hydrateWithdrawRequest,
+      (provider, context, hydrated) =>
+        provider.prepareWithdraw(context, hydrated)
+    );
   }
 
   async withdraw(
     request: LendingWithdrawRequest,
     options?: ExecuteOptions
   ): Promise<Tx> {
-    const prepared = await this.prepareWithdraw(request);
-    return await this.context.execute(prepared.calls, options);
+    return await this.executePrepared(this.prepareWithdraw(request), options);
   }
 
   async prepareWithdrawMax(
     request: LendingWithdrawMaxRequest
   ): Promise<PreparedLendingAction> {
-    const chainId = this.context.getChainId();
-    const provider = resolveLendingSource(request.provider, this);
-    assertLendingContext(provider, chainId);
-    if (!provider.prepareWithdrawMax) {
-      throw new Error(
-        `Lending provider "${provider.id}" does not support max-withdraw`
-      );
-    }
-    const prepared = await provider.prepareWithdrawMax(this.providerContext(), {
-      ...hydrateWithdrawMaxRequest(request, this.context.address),
-    });
-    this.assertPreparedCalls(prepared, provider.id);
-    return prepared;
+    return await this.prepareWithProvider(
+      request,
+      hydrateWithdrawMaxRequest,
+      (provider, context, hydrated) => {
+        if (!provider.prepareWithdrawMax) {
+          throw new Error(
+            `Lending provider "${provider.id}" does not support max-withdraw`
+          );
+        }
+        return provider.prepareWithdrawMax(context, hydrated);
+      }
+    );
   }
 
   async withdrawMax(
     request: LendingWithdrawMaxRequest,
     options?: ExecuteOptions
   ): Promise<Tx> {
-    const prepared = await this.prepareWithdrawMax(request);
-    return await this.context.execute(prepared.calls, options);
+    return await this.executePrepared(
+      this.prepareWithdrawMax(request),
+      options
+    );
   }
 
   async prepareBorrow(
     request: LendingBorrowRequest
   ): Promise<PreparedLendingAction> {
-    const chainId = this.context.getChainId();
-    const provider = resolveLendingSource(request.provider, this);
-    assertLendingContext(provider, chainId);
-    const prepared = await provider.prepareBorrow(this.providerContext(), {
-      ...hydrateBorrowRequest(request, this.context.address),
-    });
-    this.assertPreparedCalls(prepared, provider.id);
-    return prepared;
+    return await this.prepareWithProvider(
+      request,
+      hydrateBorrowRequest,
+      (provider, context, hydrated) => provider.prepareBorrow(context, hydrated)
+    );
   }
 
   async borrow(
     request: LendingBorrowRequest,
     options?: ExecuteOptions
   ): Promise<Tx> {
-    const prepared = await this.prepareBorrow(request);
-    return await this.context.execute(prepared.calls, options);
+    return await this.executePrepared(this.prepareBorrow(request), options);
   }
 
   async prepareRepay(
     request: LendingRepayRequest
   ): Promise<PreparedLendingAction> {
-    const chainId = this.context.getChainId();
-    const provider = resolveLendingSource(request.provider, this);
-    assertLendingContext(provider, chainId);
-    const prepared = await provider.prepareRepay(this.providerContext(), {
-      ...hydrateRepayRequest(request, this.context.address),
-    });
-    this.assertPreparedCalls(prepared, provider.id);
-    return prepared;
+    return await this.prepareWithProvider(
+      request,
+      hydrateRepayRequest,
+      (provider, context, hydrated) => provider.prepareRepay(context, hydrated)
+    );
   }
 
   async repay(
     request: LendingRepayRequest,
     options?: ExecuteOptions
   ): Promise<Tx> {
-    const prepared = await this.prepareRepay(request);
-    return await this.context.execute(prepared.calls, options);
+    return await this.executePrepared(this.prepareRepay(request), options);
   }
 
   async getPosition(request: LendingPositionRequest): Promise<LendingPosition> {
-    const chainId = this.context.getChainId();
-    const provider = resolveLendingSource(request.provider, this);
-    assertLendingContext(provider, chainId);
+    const provider = this.resolveRequestProvider(request.provider);
     return await provider.getPosition(this.providerContext(), {
       ...stripProvider(request),
       user: request.user ?? this.context.address,
@@ -215,9 +199,7 @@ export class LendingClient {
   async getHealth(
     request: LendingHealthQuoteRequest["health"]
   ): Promise<LendingHealth> {
-    const chainId = this.context.getChainId();
-    const provider = resolveLendingSource(request.provider, this);
-    assertLendingContext(provider, chainId);
+    const provider = this.resolveRequestProvider(request.provider);
     return await provider.getHealth(this.providerContext(), {
       ...hydrateHealthRequest(request, this.context.address),
     });
@@ -251,19 +233,14 @@ export class LendingClient {
     return await this.prepareRepay(input.request);
   }
 
-  private providerForAction(input: LendingActionInput): LendingProvider {
-    return resolveLendingSource(input.request.provider, this);
-  }
-
   private async projectHealth(
     request: LendingHealthQuoteRequest,
     current: LendingHealth
   ): Promise<LendingHealth | null> {
-    const chainId = this.context.getChainId();
-    const healthProvider = resolveLendingSource(request.health.provider, this);
-    const actionProvider = this.providerForAction(request.action);
-    assertLendingContext(healthProvider, chainId);
-    assertLendingContext(actionProvider, chainId);
+    const healthProvider = this.resolveRequestProvider(request.health.provider);
+    const actionProvider = this.resolveRequestProvider(
+      request.action.request.provider
+    );
     if (healthProvider.id !== actionProvider.id) {
       return null;
     }
@@ -275,6 +252,46 @@ export class LendingClient {
       request,
       current
     );
+  }
+
+  private resolveRequestProvider(
+    source: LendingProvider | string | undefined
+  ): LendingProvider {
+    const provider = resolveLendingSource(source, this);
+    assertLendingContext(provider, this.context.getChainId());
+    return provider;
+  }
+
+  private async prepareWithProvider<
+    TRequest extends { provider?: LendingProvider | string },
+    THydrated,
+  >(
+    request: TRequest,
+    hydrate: (
+      request: TRequest,
+      walletAddress: LendingProviderContext["walletAddress"]
+    ) => THydrated,
+    prepare: (
+      provider: LendingProvider,
+      context: LendingProviderContext,
+      hydrated: THydrated
+    ) => Promise<PreparedLendingAction>
+  ): Promise<PreparedLendingAction> {
+    const provider = this.resolveRequestProvider(request.provider);
+    const prepared = await prepare(
+      provider,
+      this.providerContext(),
+      hydrate(request, this.context.address)
+    );
+    this.assertPreparedCalls(prepared, provider.id);
+    return prepared;
+  }
+
+  private async executePrepared(
+    preparedPromise: Promise<PreparedLendingAction>,
+    options?: ExecuteOptions
+  ): Promise<Tx> {
+    return await this.context.execute((await preparedPromise).calls, options);
   }
 
   private providerContext(): LendingProviderContext {

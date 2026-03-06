@@ -118,10 +118,10 @@ export class VesuLendingProvider implements LendingProvider {
     }
 
     const response = await this.fetcher(config.marketsApiUrl);
-    const payload = (await response.json()) as VesuMarketsResponse;
     if (!response.ok) {
       throw new Error(`Vesu markets request failed (${response.status})`);
     }
+    const payload = (await response.json()) as VesuMarketsResponse;
 
     return (payload.data ?? [])
       .filter((entry) => this.isSupportedMarket(entry))
@@ -133,15 +133,9 @@ export class VesuLendingProvider implements LendingProvider {
     context: LendingProviderContext,
     request: LendingDepositRequest
   ): Promise<PreparedLendingAction> {
-    const config = this.requireChainConfig(context.chainId);
-    const poolAddress = this.resolvePoolAddress(request.poolAddress, config);
-    const receiver = request.receiver ?? context.walletAddress;
+    const { poolAddress, receiver, vTokenAddress } =
+      await this.resolveVaultContext(context, request);
     const amount = request.amount.toBase();
-    const vTokenAddress = await this.resolveVTokenAddress(
-      context,
-      poolAddress,
-      request.token.address
-    );
 
     return {
       providerId: this.id,
@@ -166,16 +160,9 @@ export class VesuLendingProvider implements LendingProvider {
     context: LendingProviderContext,
     request: LendingWithdrawRequest
   ): Promise<PreparedLendingAction> {
-    const config = this.requireChainConfig(context.chainId);
-    const poolAddress = this.resolvePoolAddress(request.poolAddress, config);
-    const receiver = request.receiver ?? context.walletAddress;
-    const owner = request.owner ?? context.walletAddress;
+    const { poolAddress, receiver, owner, vTokenAddress } =
+      await this.resolveVaultContext(context, request);
     const amount = request.amount.toBase();
-    const vTokenAddress = await this.resolveVTokenAddress(
-      context,
-      poolAddress,
-      request.token.address
-    );
 
     return {
       providerId: this.id,
@@ -203,15 +190,8 @@ export class VesuLendingProvider implements LendingProvider {
     context: LendingProviderContext,
     request: LendingWithdrawMaxRequest
   ): Promise<PreparedLendingAction> {
-    const config = this.requireChainConfig(context.chainId);
-    const poolAddress = this.resolvePoolAddress(request.poolAddress, config);
-    const receiver = request.receiver ?? context.walletAddress;
-    const owner = request.owner ?? context.walletAddress;
-    const vTokenAddress = await this.resolveVTokenAddress(
-      context,
-      poolAddress,
-      request.token.address
-    );
+    const { poolAddress, receiver, owner, vTokenAddress } =
+      await this.resolveVaultContext(context, request);
 
     const maxRedeemResult = await context.provider.callContract({
       contractAddress: vTokenAddress,
@@ -249,12 +229,10 @@ export class VesuLendingProvider implements LendingProvider {
     context: LendingProviderContext,
     request: LendingBorrowRequest
   ): Promise<PreparedLendingAction> {
-    const config = this.requireChainConfig(context.chainId);
-    const poolAddress = this.resolvePoolAddress(request.poolAddress, config);
+    const { poolAddress, user } = this.resolveRequestContext(context, request);
     const collateralAmount = request.collateralAmount?.toBase() ?? 0n;
     const collateralDenomination = request.collateralDenomination ?? "assets";
     const debtAmount = request.amount.toBase();
-    const user = request.user ?? context.walletAddress;
     const debtDenomination = request.debtDenomination ?? "assets";
     const calls: Call[] = [];
 
@@ -296,13 +274,11 @@ export class VesuLendingProvider implements LendingProvider {
     context: LendingProviderContext,
     request: LendingRepayRequest
   ): Promise<PreparedLendingAction> {
-    const config = this.requireChainConfig(context.chainId);
-    const poolAddress = this.resolvePoolAddress(request.poolAddress, config);
+    const { poolAddress, user } = this.resolveRequestContext(context, request);
     const collateralAmount = request.collateralAmount?.toBase() ?? 0n;
     const collateralDenomination = request.collateralDenomination ?? "assets";
     const withdrawCollateral = request.withdrawCollateral ?? false;
     const debtAmount = request.amount.toBase();
-    const user = request.user ?? context.walletAddress;
     const debtDenomination = request.debtDenomination ?? "assets";
 
     assertAssetsDenomination("repay", "collateral", collateralDenomination);
@@ -361,9 +337,7 @@ export class VesuLendingProvider implements LendingProvider {
     context: LendingProviderContext,
     request: LendingPositionRequest
   ): Promise<LendingPosition> {
-    const config = this.requireChainConfig(context.chainId);
-    const poolAddress = this.resolvePoolAddress(request.poolAddress, config);
-    const user = request.user ?? context.walletAddress;
+    const { poolAddress, user } = this.resolveRequestContext(context, request);
 
     const positionResult = await context.provider.callContract({
       contractAddress: poolAddress,
@@ -396,9 +370,7 @@ export class VesuLendingProvider implements LendingProvider {
     context: LendingProviderContext,
     request: LendingHealthRequest
   ): Promise<LendingHealth> {
-    const config = this.requireChainConfig(context.chainId);
-    const poolAddress = this.resolvePoolAddress(request.poolAddress, config);
-    const user = request.user ?? context.walletAddress;
+    const { poolAddress, user } = this.resolveRequestContext(context, request);
 
     const result = await context.provider.callContract({
       contractAddress: poolAddress,
@@ -426,26 +398,17 @@ export class VesuLendingProvider implements LendingProvider {
       request.action.action !== "borrow" &&
       request.action.action !== "repay"
     ) {
-      return current;
+      return null;
     }
 
-    const config = this.requireChainConfig(context.chainId);
     const actionRequest = request.action.request;
     const healthRequest = request.health;
-    const actionPoolAddress = this.resolvePoolAddress(
-      actionRequest.poolAddress,
-      config
-    );
-    const healthPoolAddress = this.resolvePoolAddress(
-      healthRequest.poolAddress,
-      config
-    );
-    const actionUser = actionRequest.user ?? context.walletAddress;
-    const healthUser = healthRequest.user ?? context.walletAddress;
+    const actionContext = this.resolveRequestContext(context, actionRequest);
+    const healthContext = this.resolveRequestContext(context, healthRequest);
 
     if (
-      actionPoolAddress !== healthPoolAddress ||
-      actionUser !== healthUser ||
+      actionContext.poolAddress !== healthContext.poolAddress ||
+      actionContext.user !== healthContext.user ||
       actionRequest.collateralToken.address !==
         healthRequest.collateralToken.address ||
       actionRequest.debtToken.address !== healthRequest.debtToken.address
@@ -475,17 +438,17 @@ export class VesuLendingProvider implements LendingProvider {
     const [collateralPrice, debtPrice, maxLtv] = await Promise.all([
       this.readAssetPrice(
         context,
-        actionPoolAddress,
+        actionContext.poolAddress,
         actionRequest.collateralToken.address
       ),
       this.readAssetPrice(
         context,
-        actionPoolAddress,
+        actionContext.poolAddress,
         actionRequest.debtToken.address
       ),
       this.readPairMaxLtv(
         context,
-        actionPoolAddress,
+        actionContext.poolAddress,
         actionRequest.collateralToken.address,
         actionRequest.debtToken.address
       ),
@@ -498,13 +461,13 @@ export class VesuLendingProvider implements LendingProvider {
       collateralDelta,
       collateralPrice.value,
       tokenScale(actionRequest.collateralToken.decimals),
-      "floor"
+      roundingForDelta(collateralDelta, "floor")
     );
     const debtDeltaValue = amountToValueDelta(
       debtDelta,
       debtPrice.value,
       tokenScale(actionRequest.debtToken.decimals),
-      "ceil"
+      roundingForDelta(debtDelta, "ceil")
     );
     const collateralValue = clampNonNegative(
       current.collateralValue + collateralDeltaValue
@@ -629,6 +592,51 @@ export class VesuLendingProvider implements LendingProvider {
     return resolved;
   }
 
+  private async resolveVaultContext<
+    T extends {
+      poolAddress?: Address;
+      token: Token;
+      receiver?: Address;
+      owner?: Address;
+    },
+  >(
+    context: LendingProviderContext,
+    request: T
+  ): Promise<{
+    poolAddress: Address;
+    receiver: Address;
+    owner: Address;
+    vTokenAddress: Address;
+  }> {
+    const poolAddress = this.resolvePoolAddress(
+      request.poolAddress,
+      this.requireChainConfig(context.chainId)
+    );
+    return {
+      poolAddress,
+      receiver: request.receiver ?? context.walletAddress,
+      owner: request.owner ?? context.walletAddress,
+      vTokenAddress: await this.resolveVTokenAddress(
+        context,
+        poolAddress,
+        request.token.address
+      ),
+    };
+  }
+
+  private resolveRequestContext<
+    T extends { poolAddress?: Address; user?: Address },
+  >(
+    context: LendingProviderContext,
+    request: T
+  ): { poolAddress: Address; user: Address } {
+    const config = this.requireChainConfig(context.chainId);
+    return {
+      poolAddress: this.resolvePoolAddress(request.poolAddress, config),
+      user: request.user ?? context.walletAddress,
+    };
+  }
+
   private resolvePoolAddress(
     poolAddress: Address | undefined,
     config: VesuChainConfig
@@ -727,6 +735,16 @@ function amountToValueDelta(
   const quotient =
     rounding === "ceil" ? (numerator + scale - 1n) / scale : numerator / scale;
   return amountDelta < 0n ? -quotient : quotient;
+}
+
+function roundingForDelta(
+  amountDelta: bigint,
+  positiveRounding: "floor" | "ceil"
+): "floor" | "ceil" {
+  if (amountDelta >= 0n) {
+    return positiveRounding;
+  }
+  return positiveRounding === "floor" ? "ceil" : "floor";
 }
 
 function clampNonNegative(value: bigint): bigint {
