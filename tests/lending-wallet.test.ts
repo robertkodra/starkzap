@@ -219,6 +219,40 @@ describe("BaseWallet lending abstraction", () => {
     });
   });
 
+  it("rejects quoteHealth when action and health target different positions", async () => {
+    const provider = createProvider();
+    const wallet = new TestWallet(provider);
+    const otherDebtToken = {
+      ...debtToken,
+      address: fromAddress("0xDE1"),
+    };
+
+    await expect(
+      wallet.lending().quoteHealth({
+        action: {
+          action: "borrow",
+          request: {
+            provider,
+            collateralToken,
+            debtToken,
+            amount: Amount.parse("1", debtToken),
+          },
+        },
+        health: {
+          provider,
+          collateralToken,
+          debtToken: otherDebtToken,
+        },
+      })
+    ).rejects.toThrow(
+      "quoteHealth requires action and health to target the same lending position"
+    );
+
+    expect(provider.getHealth).not.toHaveBeenCalled();
+    expect(provider.prepareBorrow).not.toHaveBeenCalled();
+    expect(wallet.preflightSpy).not.toHaveBeenCalled();
+  });
+
   it("executes withdrawMax when provider supports it", async () => {
     const provider = createProvider();
     const wallet = new TestWallet(provider);

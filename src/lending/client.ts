@@ -208,6 +208,7 @@ export class LendingClient {
   async quoteHealth(
     request: LendingHealthQuoteRequest
   ): Promise<LendingHealthQuote> {
+    this.assertQuoteHealthCompatibility(request);
     const current = await this.getHealth(request.health);
     const prepared = await this.prepareAction(request.action);
     const simulation = await this.context.preflight({
@@ -237,11 +238,9 @@ export class LendingClient {
     request: LendingHealthQuoteRequest,
     current: LendingHealth
   ): Promise<LendingHealth | null> {
-    const healthProvider = this.resolveRequestProvider(request.health.provider);
-    const actionProvider = this.resolveRequestProvider(
-      request.action.request.provider
-    );
-    if (healthProvider.id !== actionProvider.id) {
+    const [healthProvider, actionProvider] =
+      this.resolveQuoteProviders(request);
+    if (healthProvider !== actionProvider) {
       return null;
     }
     if (!actionProvider.quoteProjectedHealth) {
@@ -254,12 +253,61 @@ export class LendingClient {
     );
   }
 
+  private assertQuoteHealthCompatibility(
+    request: LendingHealthQuoteRequest
+  ): void {
+    const [healthProvider, actionProvider] =
+      this.resolveQuoteProviders(request);
+    if (healthProvider !== actionProvider) {
+      throw new Error(
+        "quoteHealth requires action and health to use the same lending provider"
+      );
+    }
+
+    if (
+      request.action.action !== "borrow" &&
+      request.action.action !== "repay"
+    ) {
+      return;
+    }
+
+    const healthRequest = hydrateHealthRequest(
+      request.health,
+      this.context.address
+    );
+    const actionRequest =
+      request.action.action === "borrow"
+        ? hydrateBorrowRequest(request.action.request, this.context.address)
+        : hydrateRepayRequest(request.action.request, this.context.address);
+
+    if (
+      actionRequest.poolAddress !== healthRequest.poolAddress ||
+      actionRequest.user !== healthRequest.user ||
+      actionRequest.collateralToken.address !==
+        healthRequest.collateralToken.address ||
+      actionRequest.debtToken.address !== healthRequest.debtToken.address
+    ) {
+      throw new Error(
+        "quoteHealth requires action and health to target the same lending position"
+      );
+    }
+  }
+
   private resolveRequestProvider(
     source: LendingProvider | string | undefined
   ): LendingProvider {
     const provider = resolveLendingSource(source, this);
     assertLendingContext(provider, this.context.getChainId());
     return provider;
+  }
+
+  private resolveQuoteProviders(
+    request: LendingHealthQuoteRequest
+  ): [LendingProvider, LendingProvider] {
+    return [
+      this.resolveRequestProvider(request.health.provider),
+      this.resolveRequestProvider(request.action.request.provider),
+    ];
   }
 
   private async prepareWithProvider<

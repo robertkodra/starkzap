@@ -161,7 +161,9 @@ export class VesuLendingProvider implements LendingProvider {
     request: LendingWithdrawRequest
   ): Promise<PreparedLendingAction> {
     const { poolAddress, receiver, owner, vTokenAddress } =
-      await this.resolveVaultContext(context, request);
+      await this.resolveVaultContext(context, request, {
+        requireSelfOwner: true,
+      });
     const amount = request.amount.toBase();
 
     return {
@@ -191,7 +193,9 @@ export class VesuLendingProvider implements LendingProvider {
     request: LendingWithdrawMaxRequest
   ): Promise<PreparedLendingAction> {
     const { poolAddress, receiver, owner, vTokenAddress } =
-      await this.resolveVaultContext(context, request);
+      await this.resolveVaultContext(context, request, {
+        requireSelfOwner: true,
+      });
 
     const maxRedeemResult = await context.provider.callContract({
       contractAddress: vTokenAddress,
@@ -229,7 +233,11 @@ export class VesuLendingProvider implements LendingProvider {
     context: LendingProviderContext,
     request: LendingBorrowRequest
   ): Promise<PreparedLendingAction> {
-    const { poolAddress, user } = this.resolveRequestContext(context, request);
+    const { poolAddress, user } = this.resolveWritablePositionContext(
+      context,
+      request,
+      "borrow"
+    );
     const collateralAmount = request.collateralAmount?.toBase() ?? 0n;
     const collateralDenomination = request.collateralDenomination ?? "assets";
     const debtAmount = request.amount.toBase();
@@ -274,7 +282,11 @@ export class VesuLendingProvider implements LendingProvider {
     context: LendingProviderContext,
     request: LendingRepayRequest
   ): Promise<PreparedLendingAction> {
-    const { poolAddress, user } = this.resolveRequestContext(context, request);
+    const { poolAddress, user } = this.resolveWritablePositionContext(
+      context,
+      request,
+      "repay"
+    );
     const collateralAmount = request.collateralAmount?.toBase() ?? 0n;
     const collateralDenomination = request.collateralDenomination ?? "assets";
     const withdrawCollateral = request.withdrawCollateral ?? false;
@@ -601,13 +613,20 @@ export class VesuLendingProvider implements LendingProvider {
     },
   >(
     context: LendingProviderContext,
-    request: T
+    request: T,
+    options?: { requireSelfOwner?: boolean }
   ): Promise<{
     poolAddress: Address;
     receiver: Address;
     owner: Address;
     vTokenAddress: Address;
   }> {
+    const owner = request.owner ?? context.walletAddress;
+    if (options?.requireSelfOwner && owner !== context.walletAddress) {
+      throw new Error(
+        "Vesu delegated withdrawals are not yet supported; owner must match wallet address"
+      );
+    }
     const poolAddress = this.resolvePoolAddress(
       request.poolAddress,
       this.requireChainConfig(context.chainId)
@@ -615,13 +634,29 @@ export class VesuLendingProvider implements LendingProvider {
     return {
       poolAddress,
       receiver: request.receiver ?? context.walletAddress,
-      owner: request.owner ?? context.walletAddress,
+      owner,
       vTokenAddress: await this.resolveVTokenAddress(
         context,
         poolAddress,
         request.token.address
       ),
     };
+  }
+
+  private resolveWritablePositionContext<
+    T extends { poolAddress?: Address; user?: Address },
+  >(
+    context: LendingProviderContext,
+    request: T,
+    action: "borrow" | "repay"
+  ): { poolAddress: Address; user: Address } {
+    const resolved = this.resolveRequestContext(context, request);
+    if (resolved.user !== context.walletAddress) {
+      throw new Error(
+        `Vesu delegated ${action} is not yet supported; user must match wallet address`
+      );
+    }
+    return resolved;
   }
 
   private resolveRequestContext<

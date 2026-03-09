@@ -85,6 +85,39 @@ describe("VesuLendingProvider", () => {
     expect(prepared.calls[1]!.entrypoint).toBe("deposit");
   });
 
+  it("rejects delegated withdraw owner overrides", async () => {
+    const callContract = vi.fn();
+    const provider = new VesuLendingProvider();
+    const context = createContext(callContract);
+
+    await expect(
+      provider.prepareWithdraw(context, {
+        token: debtToken,
+        amount: Amount.parse("1", debtToken),
+        owner: fromAddress("0xBEEF"),
+      })
+    ).rejects.toThrow(
+      "Vesu delegated withdrawals are not yet supported; owner must match wallet address"
+    );
+    expect(callContract).not.toHaveBeenCalled();
+  });
+
+  it("rejects delegated withdrawMax owner overrides", async () => {
+    const callContract = vi.fn();
+    const provider = new VesuLendingProvider();
+    const context = createContext(callContract);
+
+    await expect(
+      provider.prepareWithdrawMax(context, {
+        token: debtToken,
+        owner: fromAddress("0xBEEF"),
+      })
+    ).rejects.toThrow(
+      "Vesu delegated withdrawals are not yet supported; owner must match wallet address"
+    );
+    expect(callContract).not.toHaveBeenCalled();
+  });
+
   it("builds repay as approve + modify_position", async () => {
     const callContract = vi.fn();
     const provider = new VesuLendingProvider();
@@ -172,6 +205,25 @@ describe("VesuLendingProvider", () => {
     expect(callContract).not.toHaveBeenCalled();
   });
 
+  it("rejects delegated borrow user overrides", async () => {
+    const callContract = vi.fn();
+    const provider = new VesuLendingProvider();
+    const context = createContext(callContract);
+
+    await expect(
+      provider.prepareBorrow(context, {
+        poolAddress: fromAddress("0x999"),
+        collateralToken,
+        debtToken,
+        amount: Amount.parse("1", debtToken),
+        user: fromAddress("0xBEEF"),
+      })
+    ).rejects.toThrow(
+      "Vesu delegated borrow is not yet supported; user must match wallet address"
+    );
+    expect(callContract).not.toHaveBeenCalled();
+  });
+
   it("rejects native denomination in borrow", async () => {
     const callContract = vi.fn();
     const provider = new VesuLendingProvider();
@@ -226,6 +278,25 @@ describe("VesuLendingProvider", () => {
     expect(prepared.calls).toHaveLength(1);
     expect(prepared.calls[0]!.entrypoint).toBe("modify_position");
     expect(prepared.calls[0]!.contractAddress).toBe(fromAddress("0x999"));
+    expect(callContract).not.toHaveBeenCalled();
+  });
+
+  it("rejects delegated repay user overrides", async () => {
+    const callContract = vi.fn();
+    const provider = new VesuLendingProvider();
+    const context = createContext(callContract);
+
+    await expect(
+      provider.prepareRepay(context, {
+        poolAddress: fromAddress("0x999"),
+        collateralToken,
+        debtToken,
+        amount: Amount.parse("1", debtToken),
+        user: fromAddress("0xBEEF"),
+      })
+    ).rejects.toThrow(
+      "Vesu delegated repay is not yet supported; user must match wallet address"
+    );
     expect(callContract).not.toHaveBeenCalled();
   });
 
